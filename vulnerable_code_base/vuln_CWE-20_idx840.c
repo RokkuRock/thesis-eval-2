@@ -1,68 +1,61 @@
-static int unix_dgram_recvmsg(struct kiocb *iocb, struct socket *sock,
-			      struct msghdr *msg, size_t size,
-			      int flags)
-{
-	struct sock_iocb *siocb = kiocb_to_siocb(iocb);
-	struct scm_cookie tmp_scm;
-	struct sock *sk = sock->sk;
-	struct unix_sock *u = unix_sk(sk);
-	int noblock = flags & MSG_DONTWAIT;
-	struct sk_buff *skb;
-	int err;
-	int peeked, skip;
-	err = -EOPNOTSUPP;
-	if (flags&MSG_OOB)
-		goto out;
-	msg->msg_namelen = 0;
-	err = mutex_lock_interruptible(&u->readlock);
-	if (err) {
-		err = sock_intr_errno(sock_rcvtimeo(sk, noblock));
-		goto out;
-	}
-	skip = sk_peek_offset(sk, flags);
-	skb = __skb_recv_datagram(sk, flags, &peeked, &skip, &err);
-	if (!skb) {
-		unix_state_lock(sk);
-		if (sk->sk_type == SOCK_SEQPACKET && err == -EAGAIN &&
-		    (sk->sk_shutdown & RCV_SHUTDOWN))
-			err = 0;
-		unix_state_unlock(sk);
-		goto out_unlock;
-	}
-	wake_up_interruptible_sync_poll(&u->peer_wait,
-					POLLOUT | POLLWRNORM | POLLWRBAND);
-	if (msg->msg_name)
-		unix_copy_addr(msg, skb->sk);
-	if (size > skb->len - skip)
-		size = skb->len - skip;
-	else if (size < skb->len - skip)
-		msg->msg_flags |= MSG_TRUNC;
-	err = skb_copy_datagram_iovec(skb, skip, msg->msg_iov, size);
-	if (err)
-		goto out_free;
-	if (sock_flag(sk, SOCK_RCVTSTAMP))
-		__sock_recv_timestamp(msg, sk, skb);
-	if (!siocb->scm) {
-		siocb->scm = &tmp_scm;
-		memset(&tmp_scm, 0, sizeof(tmp_scm));
-	}
-	scm_set_cred(siocb->scm, UNIXCB(skb).pid, UNIXCB(skb).uid, UNIXCB(skb).gid);
-	unix_set_secdata(siocb->scm, skb);
-	if (!(flags & MSG_PEEK)) {
-		if (UNIXCB(skb).fp)
-			unix_detach_fds(siocb->scm, skb);
-		sk_peek_offset_bwd(sk, skb->len);
-	} else {
-		sk_peek_offset_fwd(sk, size);
-		if (UNIXCB(skb).fp)
-			siocb->scm->fp = scm_fp_dup(UNIXCB(skb).fp);
-	}
-	err = (flags & MSG_TRUNC) ? skb->len - skip : size;
-	scm_recv(sock, msg, siocb->scm, flags);
-out_free:
-	skb_free_datagram(sk, skb);
-out_unlock:
-	mutex_unlock(&u->readlock);
-out:
-	return err;
+int processCommand(redisClient *c) {
+    struct redisCommand *cmd;
+    if (!strcasecmp(c->argv[0]->ptr,"quit")) {
+        addReply(c,shared.ok);
+        c->flags |= REDIS_CLOSE_AFTER_REPLY;
+        return REDIS_ERR;
+    }
+    cmd = lookupCommand(c->argv[0]->ptr);
+    if (!cmd) {
+        addReplyErrorFormat(c,"unknown command '%s'",
+            (char*)c->argv[0]->ptr);
+        return REDIS_OK;
+    } else if ((cmd->arity > 0 && cmd->arity != c->argc) ||
+               (c->argc < -cmd->arity)) {
+        addReplyErrorFormat(c,"wrong number of arguments for '%s' command",
+            cmd->name);
+        return REDIS_OK;
+    }
+    if (server.requirepass && !c->authenticated && cmd->proc != authCommand) {
+        addReplyError(c,"operation not permitted");
+        return REDIS_OK;
+    }
+    if (server.maxmemory) freeMemoryIfNeeded();
+    if (server.maxmemory && (cmd->flags & REDIS_CMD_DENYOOM) &&
+        zmalloc_used_memory() > server.maxmemory)
+    {
+        addReplyError(c,"command not allowed when used memory > 'maxmemory'");
+        return REDIS_OK;
+    }
+    if ((dictSize(c->pubsub_channels) > 0 || listLength(c->pubsub_patterns) > 0)
+        &&
+        cmd->proc != subscribeCommand && cmd->proc != unsubscribeCommand &&
+        cmd->proc != psubscribeCommand && cmd->proc != punsubscribeCommand) {
+        addReplyError(c,"only (P)SUBSCRIBE / (P)UNSUBSCRIBE / QUIT allowed in this context");
+        return REDIS_OK;
+    }
+    if (server.masterhost && server.replstate != REDIS_REPL_CONNECTED &&
+        server.repl_serve_stale_data == 0 &&
+        cmd->proc != infoCommand && cmd->proc != slaveofCommand)
+    {
+        addReplyError(c,
+            "link with MASTER is down and slave-serve-stale-data is set to no");
+        return REDIS_OK;
+    }
+    if (server.loading && cmd->proc != infoCommand) {
+        addReply(c, shared.loadingerr);
+        return REDIS_OK;
+    }
+    if (c->flags & REDIS_MULTI &&
+        cmd->proc != execCommand && cmd->proc != discardCommand &&
+        cmd->proc != multiCommand && cmd->proc != watchCommand)
+    {
+        queueMultiCommand(c,cmd);
+        addReply(c,shared.queued);
+    } else {
+        if (server.vm_enabled && server.vm_max_threads > 0 &&
+            blockClientOnSwappedKeys(c,cmd)) return REDIS_ERR;
+        call(c,cmd);
+    }
+    return REDIS_OK;
 }

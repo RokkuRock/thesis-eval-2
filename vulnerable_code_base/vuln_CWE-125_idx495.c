@@ -1,75 +1,104 @@
-isis_print_mt_port_cap_subtlv(netdissect_options *ndo,
-                              const uint8_t *tptr, int len)
+GF_Err sgpd_dump(GF_Box *a, FILE * trace)
 {
-  int stlv_type, stlv_len;
-  const struct isis_subtlv_spb_mcid *subtlv_spb_mcid;
-  int i;
-  while (len > 2)
-  {
-    stlv_type = *(tptr++);
-    stlv_len  = *(tptr++);
-    ND_PRINT((ndo, "\n\t       %s subTLV #%u, length: %u",
-               tok2str(isis_mt_port_cap_subtlv_values, "unknown", stlv_type),
-               stlv_type,
-               stlv_len));
-    len = len -2;
-    switch (stlv_type)
-    {
-      case ISIS_SUBTLV_SPB_MCID:
-      {
-        ND_TCHECK2(*(tptr), ISIS_SUBTLV_SPB_MCID_MIN_LEN);
-        subtlv_spb_mcid = (const struct isis_subtlv_spb_mcid *)tptr;
-        ND_PRINT((ndo,  "\n\t         MCID: "));
-        isis_print_mcid(ndo, &(subtlv_spb_mcid->mcid));
-        ND_PRINT((ndo,  "\n\t         AUX-MCID: "));
-        isis_print_mcid(ndo, &(subtlv_spb_mcid->aux_mcid));
-        tptr = tptr + sizeof(struct isis_subtlv_spb_mcid);
-        len = len - sizeof(struct isis_subtlv_spb_mcid);
-        break;
-      }
-      case ISIS_SUBTLV_SPB_DIGEST:
-      {
-        ND_TCHECK2(*(tptr), ISIS_SUBTLV_SPB_DIGEST_MIN_LEN);
-        ND_PRINT((ndo, "\n\t        RES: %d V: %d A: %d D: %d",
-                        (*(tptr) >> 5), (((*tptr)>> 4) & 0x01),
-                        ((*(tptr) >> 2) & 0x03), ((*tptr) & 0x03)));
-        tptr++;
-        ND_PRINT((ndo,  "\n\t         Digest: "));
-        for(i=1;i<=8; i++)
-        {
-            ND_PRINT((ndo, "%08x ", EXTRACT_32BITS(tptr)));
-            if (i%4 == 0 && i != 8)
-              ND_PRINT((ndo, "\n\t                 "));
-            tptr = tptr + 4;
-        }
-        len = len - ISIS_SUBTLV_SPB_DIGEST_MIN_LEN;
-        break;
-      }
-      case ISIS_SUBTLV_SPB_BVID:
-      {
-        ND_TCHECK2(*(tptr), stlv_len);
-        while (len >= ISIS_SUBTLV_SPB_BVID_MIN_LEN)
-        {
-          ND_TCHECK2(*(tptr), ISIS_SUBTLV_SPB_BVID_MIN_LEN);
-          ND_PRINT((ndo, "\n\t           ECT: %08x",
-                      EXTRACT_32BITS(tptr)));
-          tptr = tptr+4;
-          ND_PRINT((ndo, " BVID: %d, U:%01x M:%01x ",
-                     (EXTRACT_16BITS (tptr) >> 4) ,
-                     (EXTRACT_16BITS (tptr) >> 3) & 0x01,
-                     (EXTRACT_16BITS (tptr) >> 2) & 0x01));
-          tptr = tptr + 2;
-          len = len - ISIS_SUBTLV_SPB_BVID_MIN_LEN;
-        }
-        break;
-      }
-      default:
-          break;
-    }
-  }
-  return 0;
-  trunc:
-    ND_PRINT((ndo, "\n\t\t"));
-    ND_PRINT((ndo, "%s", tstr));
-    return(1);
+	u32 i;
+	GF_SampleGroupDescriptionBox *ptr = (GF_SampleGroupDescriptionBox*) a;
+	if (!a) return GF_BAD_PARAM;
+	gf_isom_box_dump_start(a, "SampleGroupDescriptionBox", trace);
+	if (ptr->grouping_type)
+		fprintf(trace, "grouping_type=\"%s\"", gf_4cc_to_str(ptr->grouping_type) );
+	if (ptr->version==1) fprintf(trace, " default_length=\"%d\"", ptr->default_length);
+	if ((ptr->version>=2) && ptr->default_description_index) fprintf(trace, " default_group_index=\"%d\"", ptr->default_description_index);
+	fprintf(trace, ">\n");
+	for (i=0; i<gf_list_count(ptr->group_descriptions); i++) {
+		void *entry = gf_list_get(ptr->group_descriptions, i);
+		switch (ptr->grouping_type) {
+		case GF_ISOM_SAMPLE_GROUP_ROLL:
+			fprintf(trace, "<RollRecoveryEntry roll_distance=\"%d\" />\n", ((GF_RollRecoveryEntry*)entry)->roll_distance );
+			break;
+		case GF_ISOM_SAMPLE_GROUP_PROL:
+			fprintf(trace, "<AudioPreRollEntry roll_distance=\"%d\" />\n", ((GF_RollRecoveryEntry*)entry)->roll_distance );
+			break;
+		case GF_ISOM_SAMPLE_GROUP_TELE:
+			fprintf(trace, "<TemporalLevelEntry level_independently_decodable=\"%d\"/>\n", ((GF_TemporalLevelEntry*)entry)->level_independently_decodable);
+			break;
+		case GF_ISOM_SAMPLE_GROUP_RAP:
+			fprintf(trace, "<VisualRandomAccessEntry num_leading_samples_known=\"%s\"", ((GF_VisualRandomAccessEntry*)entry)->num_leading_samples_known ? "yes" : "no");
+			if (((GF_VisualRandomAccessEntry*)entry)->num_leading_samples_known)
+				fprintf(trace, " num_leading_samples=\"%d\"", ((GF_VisualRandomAccessEntry*)entry)->num_leading_samples);
+			fprintf(trace, "/>\n");
+			break;
+		case GF_ISOM_SAMPLE_GROUP_SYNC:
+			fprintf(trace, "<SyncSampleGroupEntry NAL_unit_type=\"%d\"/>\n", ((GF_SYNCEntry*)entry)->NALU_type);
+			break;
+		case GF_ISOM_SAMPLE_GROUP_SEIG:
+			fprintf(trace, "<CENCSampleEncryptionGroupEntry IsEncrypted=\"%d\" IV_size=\"%d\" KID=\"", ((GF_CENCSampleEncryptionGroupEntry*)entry)->IsProtected, ((GF_CENCSampleEncryptionGroupEntry*)entry)->Per_Sample_IV_size);
+			dump_data_hex(trace, (char *)((GF_CENCSampleEncryptionGroupEntry*)entry)->KID, 16);
+			if ((((GF_CENCSampleEncryptionGroupEntry*)entry)->IsProtected == 1) && !((GF_CENCSampleEncryptionGroupEntry*)entry)->Per_Sample_IV_size) {
+				fprintf(trace, "\" constant_IV_size=\"%d\"  constant_IV=\"", ((GF_CENCSampleEncryptionGroupEntry*)entry)->constant_IV_size);
+				dump_data_hex(trace, (char *)((GF_CENCSampleEncryptionGroupEntry*)entry)->constant_IV, ((GF_CENCSampleEncryptionGroupEntry*)entry)->constant_IV_size);
+			}
+			fprintf(trace, "\"/>\n");
+			break;
+		case GF_ISOM_SAMPLE_GROUP_OINF:
+			oinf_entry_dump(entry, trace);
+			break;
+		case GF_ISOM_SAMPLE_GROUP_LINF:
+			linf_dump(entry, trace);
+			break;
+		case GF_ISOM_SAMPLE_GROUP_TRIF:
+			trif_dump(trace, (char *) ((GF_DefaultSampleGroupDescriptionEntry*)entry)->data,  ((GF_DefaultSampleGroupDescriptionEntry*)entry)->length);
+			break;
+		case GF_ISOM_SAMPLE_GROUP_NALM:
+			nalm_dump(trace, (char *) ((GF_DefaultSampleGroupDescriptionEntry*)entry)->data,  ((GF_DefaultSampleGroupDescriptionEntry*)entry)->length);
+			break;
+		case GF_ISOM_SAMPLE_GROUP_SAP:
+			fprintf(trace, "<SAPEntry dependent_flag=\"%d\" SAP_type=\"%d\" />\n", ((GF_SAPEntry*)entry)->dependent_flag, ((GF_SAPEntry*)entry)->SAP_type);
+			break;
+		default:
+			fprintf(trace, "<DefaultSampleGroupDescriptionEntry size=\"%d\" data=\"", ((GF_DefaultSampleGroupDescriptionEntry*)entry)->length);
+			dump_data(trace, (char *) ((GF_DefaultSampleGroupDescriptionEntry*)entry)->data,  ((GF_DefaultSampleGroupDescriptionEntry*)entry)->length);
+			fprintf(trace, "\"/>\n");
+		}
+	}
+	if (!ptr->size) {
+		switch (ptr->grouping_type) {
+		case GF_ISOM_SAMPLE_GROUP_ROLL:
+			fprintf(trace, "<RollRecoveryEntry roll_distance=\"\"/>\n");
+			break;
+		case GF_ISOM_SAMPLE_GROUP_PROL:
+			fprintf(trace, "<AudioPreRollEntry roll_distance=\"\"/>\n");
+			break;
+		case GF_ISOM_SAMPLE_GROUP_TELE:
+			fprintf(trace, "<TemporalLevelEntry level_independently_decodable=\"\"/>\n");
+			break;
+		case GF_ISOM_SAMPLE_GROUP_RAP:
+			fprintf(trace, "<VisualRandomAccessEntry num_leading_samples_known=\"yes|no\" num_leading_samples=\"\" />\n");
+			break;
+		case GF_ISOM_SAMPLE_GROUP_SYNC:
+			fprintf(trace, "<SyncSampleGroupEntry NAL_unit_type=\"\" />\n");
+			break;
+		case GF_ISOM_SAMPLE_GROUP_SEIG:
+			fprintf(trace, "<CENCSampleEncryptionGroupEntry IsEncrypted=\"\" IV_size=\"\" KID=\"\" constant_IV_size=\"\"  constant_IV=\"\"/>\n");
+			break;
+		case GF_ISOM_SAMPLE_GROUP_OINF:
+			oinf_entry_dump(NULL, trace);
+			break;
+		case GF_ISOM_SAMPLE_GROUP_LINF:
+			linf_dump(NULL, trace);
+			break;
+		case GF_ISOM_SAMPLE_GROUP_TRIF:
+			trif_dump(trace, NULL, 0);
+			break;
+		case GF_ISOM_SAMPLE_GROUP_NALM:
+			nalm_dump(trace, NULL, 0);
+			break;
+		case GF_ISOM_SAMPLE_GROUP_SAP:
+			fprintf(trace, "<SAPEntry dependent_flag=\"\" SAP_type=\"\" />\n");
+			break;
+		default:
+			fprintf(trace, "<DefaultSampleGroupDescriptionEntry size=\"\" data=\"\"/>\n");
+		}
+	}
+	gf_isom_box_dump_done("SampleGroupDescriptionBox", a, trace);
+	return GF_OK;
 }

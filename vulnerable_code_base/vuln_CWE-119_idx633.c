@@ -1,20 +1,32 @@
-sf_open_fd	(int fd, int mode, SF_INFO *sfinfo, int close_desc)
-{	SF_PRIVATE 	*psf ;
-	if ((SF_CONTAINER (sfinfo->format)) == SF_FORMAT_SD2)
-	{	sf_errno = SFE_SD2_FD_DISALLOWED ;
-		return	NULL ;
-		} ;
-	if ((psf = calloc (1, sizeof (SF_PRIVATE))) == NULL)
-	{	sf_errno = SFE_MALLOC_FAILED ;
-		return	NULL ;
-		} ;
-	psf_init_files (psf) ;
-	copy_filename (psf, "") ;
-	psf->file.mode = mode ;
-	psf_set_file (psf, fd) ;
-	psf->is_pipe = psf_is_pipe (psf) ;
-	psf->fileoffset = psf_ftell (psf) ;
-	if (! close_desc)
-		psf->file.do_not_close_descriptor = SF_TRUE ;
-	return psf_open_file (psf, sfinfo) ;
-}  
+static int http_buf_read(URLContext *h, uint8_t *buf, int size)
+{
+    HTTPContext *s = h->priv_data;
+    int len;
+    len = s->buf_end - s->buf_ptr;
+    if (len > 0) {
+        if (len > size)
+            len = size;
+        memcpy(buf, s->buf_ptr, len);
+        s->buf_ptr += len;
+    } else {
+        int64_t target_end = s->end_off ? s->end_off : s->filesize;
+        if ((!s->willclose || s->chunksize < 0) &&
+            target_end >= 0 && s->off >= target_end)
+            return AVERROR_EOF;
+        len = ffurl_read(s->hd, buf, size);
+        if (!len && (!s->willclose || s->chunksize < 0) &&
+            target_end >= 0 && s->off < target_end) {
+            av_log(h, AV_LOG_ERROR,
+                   "Stream ends prematurely at %"PRId64", should be %"PRId64"\n",
+                   s->off, target_end
+                  );
+            return AVERROR(EIO);
+        }
+    }
+    if (len > 0) {
+        s->off += len;
+        if (s->chunksize > 0)
+            s->chunksize -= len;
+    }
+    return len;
+}

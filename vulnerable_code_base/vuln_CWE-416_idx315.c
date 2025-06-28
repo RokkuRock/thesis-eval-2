@@ -1,61 +1,28 @@
-static int jsR_hasproperty(js_State *J, js_Object *obj, const char *name)
+void unlink_anon_vmas(struct vm_area_struct *vma)
 {
-	js_Property *ref;
-	int k;
-	if (obj->type == JS_CARRAY) {
-		if (!strcmp(name, "length")) {
-			js_pushnumber(J, obj->u.a.length);
-			return 1;
+	struct anon_vma_chain *avc, *next;
+	struct anon_vma *root = NULL;
+	list_for_each_entry_safe(avc, next, &vma->anon_vma_chain, same_vma) {
+		struct anon_vma *anon_vma = avc->anon_vma;
+		root = lock_anon_vma_root(root, anon_vma);
+		anon_vma_interval_tree_remove(avc, &anon_vma->rb_root);
+		if (RB_EMPTY_ROOT(&anon_vma->rb_root.rb_root)) {
+			anon_vma->parent->degree--;
+			continue;
 		}
+		list_del(&avc->same_vma);
+		anon_vma_chain_free(avc);
 	}
-	else if (obj->type == JS_CSTRING) {
-		if (!strcmp(name, "length")) {
-			js_pushnumber(J, obj->u.s.length);
-			return 1;
-		}
-		if (js_isarrayindex(J, name, &k)) {
-			if (k >= 0 && k < obj->u.s.length) {
-				js_pushrune(J, js_runeat(J, obj->u.s.string, k));
-				return 1;
-			}
-		}
+	if (vma->anon_vma) {
+		vma->anon_vma->degree--;
+		vma->anon_vma = NULL;
 	}
-	else if (obj->type == JS_CREGEXP) {
-		if (!strcmp(name, "source")) {
-			js_pushliteral(J, obj->u.r.source);
-			return 1;
-		}
-		if (!strcmp(name, "global")) {
-			js_pushboolean(J, obj->u.r.flags & JS_REGEXP_G);
-			return 1;
-		}
-		if (!strcmp(name, "ignoreCase")) {
-			js_pushboolean(J, obj->u.r.flags & JS_REGEXP_I);
-			return 1;
-		}
-		if (!strcmp(name, "multiline")) {
-			js_pushboolean(J, obj->u.r.flags & JS_REGEXP_M);
-			return 1;
-		}
-		if (!strcmp(name, "lastIndex")) {
-			js_pushnumber(J, obj->u.r.last);
-			return 1;
-		}
+	unlock_anon_vma_root(root);
+	list_for_each_entry_safe(avc, next, &vma->anon_vma_chain, same_vma) {
+		struct anon_vma *anon_vma = avc->anon_vma;
+		VM_WARN_ON(anon_vma->degree);
+		put_anon_vma(anon_vma);
+		list_del(&avc->same_vma);
+		anon_vma_chain_free(avc);
 	}
-	else if (obj->type == JS_CUSERDATA) {
-		if (obj->u.user.has && obj->u.user.has(J, obj->u.user.data, name))
-			return 1;
-	}
-	ref = jsV_getproperty(J, obj, name);
-	if (ref) {
-		if (ref->getter) {
-			js_pushobject(J, ref->getter);
-			js_pushobject(J, obj);
-			js_call(J, 0);
-		} else {
-			js_pushvalue(J, ref->value);
-		}
-		return 1;
-	}
-	return 0;
 }

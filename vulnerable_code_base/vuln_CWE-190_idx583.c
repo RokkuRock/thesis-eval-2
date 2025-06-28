@@ -1,23 +1,47 @@
-PyMemoTable_Copy(PyMemoTable *self)
+static int ssl_parse_client_psk_identity( mbedtls_ssl_context *ssl, unsigned char **p,
+                                          const unsigned char *end )
 {
-    Py_ssize_t i;
-    PyMemoTable *new = PyMemoTable_New();
-    if (new == NULL)
-        return NULL;
-    new->mt_used = self->mt_used;
-    new->mt_allocated = self->mt_allocated;
-    new->mt_mask = self->mt_mask;
-    PyMem_FREE(new->mt_table);
-    new->mt_table = PyMem_NEW(PyMemoEntry, self->mt_allocated);
-    if (new->mt_table == NULL) {
-        PyMem_FREE(new);
-        PyErr_NoMemory();
-        return NULL;
+    int ret = 0;
+    size_t n;
+    if( ssl->conf->f_psk == NULL &&
+        ( ssl->conf->psk == NULL || ssl->conf->psk_identity == NULL ||
+          ssl->conf->psk_identity_len == 0 || ssl->conf->psk_len == 0 ) )
+    {
+        MBEDTLS_SSL_DEBUG_MSG( 1, ( "got no pre-shared key" ) );
+        return( MBEDTLS_ERR_SSL_PRIVATE_KEY_REQUIRED );
     }
-    for (i = 0; i < self->mt_allocated; i++) {
-        Py_XINCREF(self->mt_table[i].me_key);
+    if( *p + 2 > end )
+    {
+        MBEDTLS_SSL_DEBUG_MSG( 1, ( "bad client key exchange message" ) );
+        return( MBEDTLS_ERR_SSL_BAD_HS_CLIENT_KEY_EXCHANGE );
     }
-    memcpy(new->mt_table, self->mt_table,
-           sizeof(PyMemoEntry) * self->mt_allocated);
-    return new;
+    n = ( (*p)[0] << 8 ) | (*p)[1];
+    *p += 2;
+    if( n < 1 || n > 65535 || *p + n > end )
+    {
+        MBEDTLS_SSL_DEBUG_MSG( 1, ( "bad client key exchange message" ) );
+        return( MBEDTLS_ERR_SSL_BAD_HS_CLIENT_KEY_EXCHANGE );
+    }
+    if( ssl->conf->f_psk != NULL )
+    {
+        if( ssl->conf->f_psk( ssl->conf->p_psk, ssl, *p, n ) != 0 )
+            ret = MBEDTLS_ERR_SSL_UNKNOWN_IDENTITY;
+    }
+    else
+    {
+        if( n != ssl->conf->psk_identity_len ||
+            mbedtls_ssl_safer_memcmp( ssl->conf->psk_identity, *p, n ) != 0 )
+        {
+            ret = MBEDTLS_ERR_SSL_UNKNOWN_IDENTITY;
+        }
+    }
+    if( ret == MBEDTLS_ERR_SSL_UNKNOWN_IDENTITY )
+    {
+        MBEDTLS_SSL_DEBUG_BUF( 3, "Unknown PSK identity", *p, n );
+        mbedtls_ssl_send_alert_message( ssl, MBEDTLS_SSL_ALERT_LEVEL_FATAL,
+                                        MBEDTLS_SSL_ALERT_MSG_UNKNOWN_PSK_IDENTITY );
+        return( MBEDTLS_ERR_SSL_UNKNOWN_IDENTITY );
+    }
+    *p += n;
+    return( 0 );
 }

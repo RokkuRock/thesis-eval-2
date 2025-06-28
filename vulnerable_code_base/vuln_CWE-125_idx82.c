@@ -1,91 +1,203 @@
-static int jpc_pi_nextpcrl(register jpc_pi_t *pi)
+parse_tree(tree_t *t)		 
 {
-	int rlvlno;
-	jpc_pirlvl_t *pirlvl;
-	jpc_pchg_t *pchg;
-	int prchind;
-	int prcvind;
-	int *prclyrno;
-	int compno;
-	jpc_picomp_t *picomp;
-	int xstep;
-	int ystep;
-	uint_fast32_t trx0;
-	uint_fast32_t try0;
-	uint_fast32_t r;
-	uint_fast32_t rpx;
-	uint_fast32_t rpy;
-	pchg = pi->pchg;
-	if (!pi->prgvolfirst) {
-		goto skip;
-	} else {
-		pi->xstep = 0;
-		pi->ystep = 0;
-		for (compno = 0, picomp = pi->picomps; compno < pi->numcomps;
-		  ++compno, ++picomp) {
-			for (rlvlno = 0, pirlvl = picomp->pirlvls; rlvlno <
-			  picomp->numrlvls; ++rlvlno, ++pirlvl) {
-				xstep = picomp->hsamp * (1 <<
-				  (pirlvl->prcwidthexpn + picomp->numrlvls -
-				  rlvlno - 1));
-				ystep = picomp->vsamp * (1 <<
-				  (pirlvl->prcheightexpn + picomp->numrlvls -
-				  rlvlno - 1));
-				pi->xstep = (!pi->xstep) ? xstep :
-				  JAS_MIN(pi->xstep, xstep);
-				pi->ystep = (!pi->ystep) ? ystep :
-				  JAS_MIN(pi->ystep, ystep);
-			}
-		}
-		pi->prgvolfirst = 0;
-	}
-	for (pi->y = pi->ystart; pi->y < pi->yend; pi->y += pi->ystep -
-	  (pi->y % pi->ystep)) {
-		for (pi->x = pi->xstart; pi->x < pi->xend; pi->x += pi->xstep -
-		  (pi->x % pi->xstep)) {
-			for (pi->compno = pchg->compnostart, pi->picomp =
-			  &pi->picomps[pi->compno]; pi->compno < pi->numcomps
-			  && pi->compno < JAS_CAST(int, pchg->compnoend); ++pi->compno,
-			  ++pi->picomp) {
-				for (pi->rlvlno = pchg->rlvlnostart,
-				  pi->pirlvl = &pi->picomp->pirlvls[pi->rlvlno];
-				  pi->rlvlno < pi->picomp->numrlvls &&
-				  pi->rlvlno < pchg->rlvlnoend; ++pi->rlvlno,
-				  ++pi->pirlvl) {
-					if (pi->pirlvl->numprcs == 0) {
-						continue;
-					}
-					r = pi->picomp->numrlvls - 1 - pi->rlvlno;
-					trx0 = JPC_CEILDIV(pi->xstart, pi->picomp->hsamp << r);
-					try0 = JPC_CEILDIV(pi->ystart, pi->picomp->vsamp << r);
-					rpx = r + pi->pirlvl->prcwidthexpn;
-					rpy = r + pi->pirlvl->prcheightexpn;
-					if (((pi->x == pi->xstart && ((trx0 << r) % (1 << rpx))) ||
-					  !(pi->x % (pi->picomp->hsamp << rpx))) &&
-					  ((pi->y == pi->ystart && ((try0 << r) % (1 << rpy))) ||
-					  !(pi->y % (pi->picomp->vsamp << rpy)))) {
-						prchind = JPC_FLOORDIVPOW2(JPC_CEILDIV(pi->x, pi->picomp->hsamp
-						  << r), pi->pirlvl->prcwidthexpn) - JPC_FLOORDIVPOW2(trx0,
-						  pi->pirlvl->prcwidthexpn);
-						prcvind = JPC_FLOORDIVPOW2(JPC_CEILDIV(pi->y, pi->picomp->vsamp
-						  << r), pi->pirlvl->prcheightexpn) - JPC_FLOORDIVPOW2(try0,
-						  pi->pirlvl->prcheightexpn);
-						pi->prcno = prcvind * pi->pirlvl->numhprcs + prchind;
-						assert(pi->prcno < pi->pirlvl->numprcs);
-						for (pi->lyrno = 0; pi->lyrno < pi->numlyrs &&
-						  pi->lyrno < JAS_CAST(int, pchg->lyrnoend); ++pi->lyrno) {
-							prclyrno = &pi->pirlvl->prclyrnos[pi->prcno];
-							if (pi->lyrno >= *prclyrno) {
-								++(*prclyrno);
-								return 0;
-							}
-skip:
-							;
-						}
-					}
-				}
-			}
-		}
-	}
-	return 1;
+  tree_t	*parent;	 
+  tree_t	*target,	 
+		*temp;		 
+  uchar		heading[255],	 
+		link[255],	 
+		baselink[255],	 
+		*existing;	 
+  int		i, level;	 
+  uchar		*var;		 
+  static const char *ones[10] =
+		{
+		  "",	"i",	"ii",	"iii",	"iv",
+		  "v",	"vi",	"vii",	"viii",	"ix"
+		},
+		*tens[10] =
+		{
+		  "",	"x",	"xx",	"xxx",	"xl",
+		  "l",	"lx",	"lxx",	"lxxx",	"xc"
+		},
+		*hundreds[10] =
+		{
+		  "",	"c",	"cc",	"ccc",	"cd",
+		  "d",	"dc",	"dcc",	"dccc",	"cm"
+		},
+		*ONES[10] =
+		{
+		  "",	"I",	"II",	"III",	"IV",
+		  "V",	"VI",	"VII",	"VIII",	"IX"
+		},
+		*TENS[10] =
+		{
+		  "",	"X",	"XX",	"XXX",	"XL",
+		  "L",	"LX",	"LXX",	"LXXX",	"XC"
+		},
+		*HUNDREDS[10] =
+		{
+		  "",	"C",	"CC",	"CCC",	"CD",
+		  "D",	"DC",	"DCC",	"DCCC",	"CM"
+		};
+  while (t != NULL)
+  {
+    switch (t->markup)
+    {
+      case MARKUP_H1 :
+      case MARKUP_H2 :
+      case MARKUP_H3 :
+      case MARKUP_H4 :
+      case MARKUP_H5 :
+      case MARKUP_H6 :
+      case MARKUP_H7 :
+      case MARKUP_H8 :
+      case MARKUP_H9 :
+      case MARKUP_H10 :
+      case MARKUP_H11 :
+      case MARKUP_H12 :
+      case MARKUP_H13 :
+      case MARKUP_H14 :
+      case MARKUP_H15 :
+          level = t->markup - MARKUP_H1;
+	  if ((level - last_level) > 1)
+	  {
+	    level     = last_level + 1;
+	    t->markup = (markup_t)(MARKUP_H1 + level);
+	  }
+          if ((var = htmlGetVariable(t, (uchar *)"VALUE")) != NULL)
+            heading_numbers[level] = atoi((char *)var);
+          else
+            heading_numbers[level] ++;
+          if (level == 0)
+            TocDocCount ++;
+          if ((var = htmlGetVariable(t, (uchar *)"TYPE")) != NULL)
+            heading_types[level] = var[0];
+          for (i = level + 1; i < 15; i ++)
+            heading_numbers[i] = 0;
+          heading[0]  = '\0';
+	  baselink[0] = '\0';
+          for (i = 0; i <= level; i ++)
+          {
+            uchar	*baseptr = baselink + strlen((char *)baselink);
+            uchar	*headptr = heading + strlen((char *)heading);
+            if (i == 0)
+              snprintf((char *)baseptr, sizeof(baselink) - (size_t)(baseptr - baselink), "%d", TocDocCount);
+            else
+              snprintf((char *)baseptr, sizeof(baselink) - (size_t)(baseptr - baselink), "%d", heading_numbers[i]);
+            switch (heading_types[i])
+            {
+              case '1' :
+                  snprintf((char *)headptr, sizeof(heading) - (size_t)(headptr - heading), "%d", heading_numbers[i]);
+                  break;
+              case 'a' :
+                  if (heading_numbers[i] > 26)
+                    snprintf((char *)headptr, sizeof(heading) - (size_t)(headptr - heading), "%c%c", 'a' + (heading_numbers[i] / 26) - 1, 'a' + (heading_numbers[i] % 26) - 1);
+                  else
+                    snprintf((char *)headptr, sizeof(heading) - (size_t)(headptr - heading), "%c", 'a' + heading_numbers[i] - 1);
+                  break;
+              case 'A' :
+                  if (heading_numbers[i] > 26)
+                    snprintf((char *)headptr, sizeof(heading) - (size_t)(headptr - heading), "%c%c", 'A' + (heading_numbers[i] / 26) - 1, 'A' + (heading_numbers[i] % 26) - 1);
+                  else
+                    snprintf((char *)headptr, sizeof(heading) - (size_t)(headptr - heading), "%c", 'A' + heading_numbers[i] - 1);
+                  break;
+              case 'i' :
+                  snprintf((char *)headptr, sizeof(heading) - (size_t)(headptr - heading), "%s%s%s", hundreds[heading_numbers[i] / 100], tens[(heading_numbers[i] / 10) % 10], ones[heading_numbers[i] % 10]);
+                  break;
+              case 'I' :
+                  snprintf((char *)headptr, sizeof(heading) - (size_t)(headptr - heading), "%s%s%s", HUNDREDS[heading_numbers[i] / 100], TENS[(heading_numbers[i] / 10) % 10], ONES[heading_numbers[i] % 10]);
+                  break;
+            }
+            if (i < level)
+            {
+              strlcat((char *)heading, ".", sizeof(heading));
+              strlcat((char *)baselink, "_", sizeof(baselink));
+            }
+          }
+          existing = NULL;
+          if (t->parent != NULL && t->parent->markup == MARKUP_A)
+          {
+	    existing = htmlGetVariable(t->parent, (uchar *)"NAME");
+	    if (!existing)
+              existing = htmlGetVariable(t->parent, (uchar *)"ID");
+          }
+	  if (existing == NULL &&
+              t->child != NULL && t->child->markup == MARKUP_A)
+          {
+	    existing = htmlGetVariable(t->child, (uchar *)"NAME");
+	    if (!existing)
+              existing = htmlGetVariable(t->child, (uchar *)"ID");
+          }
+          if (existing != NULL &&
+	      strlen((char *)existing) >= 124)	 
+	    existing = NULL;
+          if (existing != NULL)
+	    snprintf((char *)link, sizeof(link), "#%s", existing);
+	  else
+	    snprintf((char *)link, sizeof(link), "#%s", baselink);
+          if (TocNumbers)
+	  {
+            strlcat((char *)heading, " ", sizeof(heading));
+            htmlInsertTree(t, MARKUP_NONE, heading);
+	  }
+          if (level < TocLevels)
+          {
+            if (level > last_level)
+	    {
+	      if (heading_parents[last_level]->last_child && level > 1)
+        	heading_parents[level] =
+		    htmlAddTree(heading_parents[last_level]->last_child,
+                                MARKUP_UL, NULL);
+              else
+        	heading_parents[level] =
+		    htmlAddTree(heading_parents[last_level], MARKUP_UL, NULL);
+              DEBUG_printf(("level=%d, last_level=%d, created new UL parent %p\n",
+	                    level, last_level, (void *)heading_parents[level]));
+	    }
+            if (level == 0)
+            {
+              if (last_level == 0)
+              {
+                htmlAddTree(heading_parents[level], MARKUP_BR, NULL);
+                htmlAddTree(heading_parents[level], MARKUP_BR, NULL);
+              }
+              parent = htmlAddTree(heading_parents[level], MARKUP_B, NULL);
+            }
+            else
+              parent = htmlAddTree(heading_parents[level], MARKUP_LI, NULL);
+            DEBUG_printf(("parent=%p\n", (void *)parent));
+            if ((var = htmlGetVariable(t, (uchar *)"_HD_OMIT_TOC")) != NULL)
+	      htmlSetVariable(parent, (uchar *)"_HD_OMIT_TOC", var);
+            if (TocLinks)
+            {
+              parent = htmlAddTree(parent, MARKUP_A, NULL);
+              htmlSetVariable(parent, (uchar *)"HREF", link);
+              if (existing == NULL)
+	      {
+                if (t->parent != NULL && t->parent->markup == MARKUP_A)
+	          htmlSetVariable(t->parent, (uchar *)"NAME", baselink);
+		else if (t->child != NULL && t->child->markup == MARKUP_A)
+	          htmlSetVariable(t->child, (uchar *)"NAME", baselink);
+		else
+		{
+        	  target = htmlNewTree(t, MARKUP_A, NULL);
+        	  htmlSetVariable(target, (uchar *)"NAME", baselink);
+        	  for (temp = t->child; temp != NULL; temp = temp->next)
+                    temp->parent = target;
+        	  target->child = t->child;
+        	  t->child      = target;
+	        }
+	      }
+            }
+            add_heading(parent, t->child);
+          }
+          last_level = level;
+          break;
+      default :
+          if (t->child != NULL)
+            parse_tree(t->child);
+          break;
+    }
+    t = t->next;
+  }
 }

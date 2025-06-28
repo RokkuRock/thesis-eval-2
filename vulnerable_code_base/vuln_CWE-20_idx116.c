@@ -1,54 +1,69 @@
-error_t mqttSnClientDisconnect(MqttSnClientContext *context)
+jpc_streamlist_t *jpc_ppmstabtostreams(jpc_ppxstab_t *tab)
 {
-   error_t error;
-   systime_t time;
-   if(context == NULL)
-      return ERROR_INVALID_PARAMETER;
-   error = NO_ERROR;
-   while(!error)
-   {
-      time = osGetSystemTime();
-      if(context->state == MQTT_SN_CLIENT_STATE_ACTIVE)
-      {
-         context->startTime = time;
-         error = mqttSnClientSendDisconnect(context, 0);
-      }
-      else if(context->state == MQTT_SN_CLIENT_STATE_SENDING_REQ)
-      {
-         if(timeCompare(time, context->startTime + context->timeout) >= 0)
-         {
-            mqttSnClientShutdownConnection(context);
-            error = ERROR_TIMEOUT;
-         }
-         else if(timeCompare(time, context->retransmitStartTime +
-            MQTT_SN_CLIENT_RETRY_TIMEOUT) >= 0)
-         {
-            error = mqttSnClientSendDisconnect(context, 0);
-         }
-         else
-         {
-            error = mqttSnClientProcessEvents(context, MQTT_SN_CLIENT_TICK_INTERVAL);
-         }
-      }
-      else if(context->state == MQTT_SN_CLIENT_STATE_DISCONNECTING)
-      {
-         error = mqttSnClientShutdownConnection(context);
-         mqttSnClientCloseConnection(context);
-         context->state = MQTT_SN_CLIENT_STATE_DISCONNECTED;
-      }
-      else if(context->state == MQTT_SN_CLIENT_STATE_DISCONNECTED)
-      {
-         break;
-      }
-      else
-      {
-         error = ERROR_WRONG_STATE;
-      }
-   }
-   if(error != NO_ERROR && error != ERROR_WOULD_BLOCK)
-   {
-      mqttSnClientCloseConnection(context);
-      context->state = MQTT_SN_CLIENT_STATE_DISCONNECTED;
-   }
-   return error;
+	jpc_streamlist_t *streams;
+	uchar *dataptr;
+	uint_fast32_t datacnt;
+	uint_fast32_t tpcnt;
+	jpc_ppxstabent_t *ent;
+	int entno;
+	jas_stream_t *stream;
+	int n;
+	if (!(streams = jpc_streamlist_create())) {
+		goto error;
+	}
+	if (!tab->numents) {
+		return streams;
+	}
+	entno = 0;
+	ent = tab->ents[entno];
+	dataptr = ent->data;
+	datacnt = ent->len;
+	for (;;) {
+		if (datacnt < 4) {
+			goto error;
+		}
+		if (!(stream = jas_stream_memopen(0, 0))) {
+			goto error;
+		}
+		if (jpc_streamlist_insert(streams, jpc_streamlist_numstreams(streams),
+		  stream)) {
+			goto error;
+		}
+		tpcnt = (dataptr[0] << 24) | (dataptr[1] << 16) | (dataptr[2] << 8)
+		  | dataptr[3];
+		datacnt -= 4;
+		dataptr += 4;
+		while (tpcnt) {
+			if (!datacnt) {
+				if (++entno >= tab->numents) {
+					goto error;
+				}
+				ent = tab->ents[entno];
+				dataptr = ent->data;
+				datacnt = ent->len;
+			}
+			n = JAS_MIN(tpcnt, datacnt);
+			if (jas_stream_write(stream, dataptr, n) != n) {
+				goto error;
+			}
+			tpcnt -= n;
+			dataptr += n;
+			datacnt -= n;
+		}
+		jas_stream_rewind(stream);
+		if (!datacnt) {
+			if (++entno >= tab->numents) {
+				break;
+			}
+			ent = tab->ents[entno];
+			dataptr = ent->data;
+			datacnt = ent->len;
+		}
+	}
+	return streams;
+error:
+	if (streams) {
+		jpc_streamlist_destroy(streams);
+	}
+	return 0;
 }

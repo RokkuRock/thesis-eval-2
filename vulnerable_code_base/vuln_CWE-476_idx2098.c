@@ -1,0 +1,4 @@
+jpeg_error_handler(j_common_ptr)
+{
+  return;
+}

@@ -1,0 +1,33 @@
+static void perf_event_interrupt(struct pt_regs *regs)
+{
+	int i;
+	struct cpu_hw_events *cpuhw = &__get_cpu_var(cpu_hw_events);
+	struct perf_event *event;
+	unsigned long val;
+	int found = 0;
+	int nmi;
+	nmi = perf_intr_is_nmi(regs);
+	if (nmi)
+		nmi_enter();
+	else
+		irq_enter();
+	for (i = 0; i < ppmu->n_counter; ++i) {
+		event = cpuhw->event[i];
+		val = read_pmc(i);
+		if ((int)val < 0) {
+			if (event) {
+				found = 1;
+				record_and_restart(event, val, regs, nmi);
+			} else {
+				write_pmc(i, 0);
+			}
+		}
+	}
+	mtmsr(mfmsr() | MSR_PMM);
+	mtpmr(PMRN_PMGC0, PMGC0_PMIE | PMGC0_FCECE);
+	isync();
+	if (nmi)
+		nmi_exit();
+	else
+		irq_exit();
+}
