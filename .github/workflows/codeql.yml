@@ -1,7 +1,7 @@
 # .github/workflows/custom-codeql.yml
 # 描述: 為大量獨立 C 檔案設計的自訂 CodeQL 工作流程。
 # 目的: 解決預設 CodeQL 分析因檔案過多而中斷的問題。
-# 版本: v3 - 修正並簡化了建構指令，使其更穩定、更標準。
+# 版本: v4 - 降級 Action 版本作為備用解決方案。
 
 name: "Custom CodeQL Analysis for C/C++"
 
@@ -27,19 +27,16 @@ jobs:
     steps:
     # 步驟 1: 將您的倉庫程式碼下載到虛擬環境中
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v3 # 同時將 checkout 降級以保持一致性
 
-    # 步驟 2: 初始化 CodeQL
-    # CodeQL 會自動準備好，並追蹤後續步驟中的編譯指令。
-    # 我們不再需要 build-mode: none 這個複雜的設定。
+    # 步驟 2: 初始化 CodeQL (降級到 v2)
+    # 這是為了解決潛在的 v3 版本解析問題
     - name: Initialize CodeQL
-      uses: codeql-action/init@v3
+      uses: github/codeql-action/init@v2
       with:
         languages: cpp
 
     # 步驟 3: 編譯所有 C 檔案 (關鍵步驟)
-    # 我們使用一個簡單的迴圈來逐一編譯檔案。
-    # CodeQL 的 init 步驟會自動"看見"並追蹤這個 run 步驟中的 gcc 指令來建立資料庫。
     - name: Compile all C files for analysis
       run: |
         find ./vulnerable_code_base -name "*.c" -print0 | while IFS= read -r -d '' file; do
@@ -49,8 +46,7 @@ jobs:
           gcc -c "$file" -o "${file}.o" || true
         done
 
-    # 步驟 4: 執行分析
-    # CodeQL 會使用上一步透過追蹤編譯所建立的資料庫來進行分析。
+    # 步驟 4: 執行分析 (降級到 v2)
     - name: Perform CodeQL Analysis
-      uses: codeql-action/analyze@v3
+      uses: github/codeql-action/analyze@v2
 
