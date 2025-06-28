@@ -1,52 +1,67 @@
 # .github/workflows/custom-codeql.yml
 # 描述: 為大量獨立 C 檔案設計的自訂 CodeQL 工作流程。
 # 目的: 解決預設 CodeQL 分析因檔案過多而中斷的問題。
-# 版本: v4 - 降級 Action 版本作為備用解決方案。
 
 name: "Custom CodeQL Analysis for C/C++"
 
 on:
+  # 當有程式碼推送到 main 分支時觸發
   push:
     branches: [ "main" ]
+  # 當有 Pull Request 指向 main 分支時觸發
   pull_request:
     branches: [ "main" ]
+  # 允許在 GitHub Actions 頁面手動觸發此工作流程
   workflow_dispatch:
 
 jobs:
   analyze:
     name: Analyze C/C++ Code
+    # 在 GitHub 管理的最新 Ubuntu 虛擬環境中運行
     runs-on: ubuntu-latest
+    
+    # 設定此工作流程所需的權限
     permissions:
-      actions: read
-      contents: read
-      security-events: write
+      actions: read      # 讀取 actions 狀態
+      contents: read     # 讀取倉庫內容 (checkout)
+      security-events: write # 將分析結果寫入 Security tab
 
     strategy:
+      # 即使一個矩陣中的任務失敗，也不會取消其他任務的運行
       fail-fast: false
 
     steps:
     # 步驟 1: 將您的倉庫程式碼下載到虛擬環境中
     - name: Checkout repository
-      uses: actions/checkout@v3 # 同時將 checkout 降級以保持一致性
+      uses: actions/checkout@v4
 
-    # 步驟 2: 初始化 CodeQL (降級到 v2)
-    # 這是為了解決潛在的 v3 版本解析問題
+    # 步驟 2: 初始化 CodeQL
+    # 這會設置好 CodeQL CLI，並準備開始監控建構過程
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v2
+      uses: codeql-action/init@v3
       with:
-        languages: cpp
+        # 明確指定要分析的語言是 C/C++
+        languages: cpp 
+        # 使用 build-mode: none，因為我們將手動提供編譯指令
+        # 這比預設的 autobuild 更適合我們有大量獨立檔案的場景
+        build-mode: none
 
-    # 步驟 3: 編譯所有 C 檔案 (關鍵步驟)
-    - name: Compile all C files for analysis
+    # 步驟 3: 手動建構資料庫 (關鍵步驟)
+    # 這個步驟會遍歷所有 .c 檔案，並逐一進行編譯，讓 CodeQL 從中學習程式碼結構
+    - name: Build CodeQL database
       run: |
+        # 使用 find 命令尋找指定目錄下的所有 .c 檔案
+        # -print0 和 -d '' 是為了處理檔名中可能包含空格等特殊字元的情況
         find ./vulnerable_code_base -name "*.c" -print0 | while IFS= read -r -d '' file; do
-          echo "Compiling $file for analysis..."
-          # 使用 -c 選項只編譯不連結，這是 CodeQL 建立資料庫所需。
-          # `|| true` 確保即使有單一檔案編譯失敗，整個工作流程也不會立即中止。
-          gcc -c "$file" -o "${file}.o" || true
+          echo "Analyzing: $file"
+          # 執行 CodeQL 命令來單獨分析每個檔案
+          # `codeql database trace-command` 會追蹤後續的編譯指令
+          # `|| true` 確保即使某個檔案因語法錯誤無法被分析，整個流程也不會中斷
+          codeql database trace-command -- ./"$file" || true
         done
 
-    # 步驟 4: 執行分析 (降級到 v2)
+    # 步驟 4: 執行分析
+    # CodeQL 現在會使用上一步建立的資料庫來運行所有相關的查詢規則
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v2
+      uses: codeql-action/analyze@v3
 
