@@ -29,10 +29,10 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3 # 同時將 checkout 降級以保持一致性
 
-    # 步驟 2: 初始化 CodeQL (降級到 v2)
+    # 步驟 2: 初始化 CodeQL 
     # 這是為了解決潛在的 v3 版本解析問題
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v2
+      uses: github/codeql-action/init@v3
       with:
         languages: cpp
 
@@ -46,7 +46,7 @@ jobs:
           gcc -c "$file" -o "${file}.o" || true
         done
 
-    # 步驟 4: 執行分析 (降級到 v2)
+    # 步驟 4: 執行分析
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v2
+      uses: github/codeql-action/analyze@v3
 
